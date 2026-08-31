@@ -1,0 +1,24 @@
+{
+  "name": "megaclinic-insurance-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mega Clinic group insurance enrollment/exit tracker",
+  "main": "server.js",
+  "scripts": {
+    "start": "node db/migrate.js && node db/seed.js && node server.js",
+    "migrate": "node db/migrate.js",
+    "seed": "node db/seed.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^9.0.1",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "pg": "^8.11.5"
+  }
+}

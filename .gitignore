@@ -1,0 +1,10 @@
+node_modules/
+.env
+*.log
+.deploy-secrets.txt
+
+# Real employee PII (ID cards, phone numbers, bank accounts) — never goes to
+# git, public or private. Loaded straight into the production database
+# instead; see db/seed.js and the deployment notes.
+db/dataemp_seed.json
+db/insurance_seed.json
