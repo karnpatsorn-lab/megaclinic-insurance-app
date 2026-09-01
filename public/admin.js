@@ -33,11 +33,22 @@ async function init() {
     if (user) {
       showApp(user);
       navigate('dashboard');
+      refreshRequestsBadge();
     } else {
       showLogin();
     }
   } catch {
     showLogin();
+  }
+}
+
+async function refreshRequestsBadge() {
+  try {
+    const { requests } = await api('/api/admin/self-service-requests?status=pending');
+    const badge = $('#requests-count-badge');
+    badge.innerHTML = requests.length ? `<span class="badge badge-warn">${requests.length}</span>` : '';
+  } catch {
+    // silent — badge is a nice-to-have, not critical
   }
 }
 
@@ -80,6 +91,7 @@ async function navigate(view) {
     if (view === 'dashboard') await renderDashboard(root);
     else if (view === 'roster') await renderRoster(root);
     else if (view === 'export') await renderExport(root);
+    else if (view === 'requests') await renderRequests(root);
   } catch (err) {
     root.innerHTML = `<p class="error-text">${err.message}</p>`;
   }
@@ -331,5 +343,78 @@ async function renderBatchHistory() {
     </tbody>
   </table>`;
 }
+
+// ---------- Self-service requests (HR review queue) ----------
+function requestPayloadLine(r) {
+  if (r.kind === 'profile') {
+    const labels = { nickname: 'ชื่อเล่น', phone: 'เบอร์โทร', currentAddress: 'ที่อยู่', personalEmail: 'อีเมลส่วนตัว' };
+    return Object.entries(r.payload).map(([k, v]) => `<div><span class="muted">${labels[k] || k}:</span> ${v || '—'}</div>`).join('');
+  }
+  if (r.kind === 'family_members') {
+    return (r.payload.members || []).map((m) => `<div>${m.title || ''}${m.firstName} ${m.lastName} <span class="muted">(${m.relation || '-'}${m.phone ? ', ' + m.phone : ''})</span></div>`).join('');
+  }
+  return '<span class="muted">—</span>';
+}
+
+async function renderRequests(root) {
+  root.innerHTML = `
+    <div class="topbar"><h1>คำขอแก้ไขข้อมูล</h1></div>
+    <div class="card">
+      <p class="muted" style="margin-top:0;">คำขอที่พนักงานส่งมาผ่านหน้าแจ้งข้อมูลตัวเอง จะยังไม่มีผลจนกว่าฝ่ายบุคคลจะกดอนุมัติ</p>
+      <div id="requests-list"><p class="muted">กำลังโหลด...</p></div>
+    </div>
+  `;
+  await loadRequestsList();
+}
+
+async function loadRequestsList() {
+  const { requests } = await api('/api/admin/self-service-requests?status=pending');
+  const el = $('#requests-list');
+  if (!requests.length) {
+    el.innerHTML = '<p class="muted">ไม่มีคำขอค้างพิจารณา 🎉</p>';
+    refreshRequestsBadge();
+    return;
+  }
+  const kindLabel = { profile: 'แก้ไขข้อมูลส่วนตัว', family_members: 'รายชื่อญาติ (ลากิจ)' };
+  el.innerHTML = requests.map((r) => `
+    <div class="card" style="box-shadow:none;border:1px solid var(--hairline);margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div>
+          <strong>${r.first_th} ${r.last_th}</strong> <span class="muted">${r.emp_id} · ${r.department || ''}</span><br>
+          <span class="badge badge-info">${kindLabel[r.kind] || r.kind}</span>
+          <span class="muted"> ส่งเมื่อ ${fmtDate(r.created_at)}</span>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-brand" style="padding:4px 12px;font-size:12px;" onclick="approveRequest(${r.id})">อนุมัติ</button>
+          <button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick="rejectRequest(${r.id})">ปฏิเสธ</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--hairline);">${requestPayloadLine(r)}</div>
+    </div>
+  `).join('');
+  refreshRequestsBadge();
+}
+
+async function approveRequest(id) {
+  if (!confirm('ยืนยันอนุมัติคำขอนี้? ข้อมูลจะถูกบันทึกเข้าระบบทันที')) return;
+  try {
+    await api(`/api/admin/self-service-requests/${id}/approve`, { method: 'POST' });
+    await loadRequestsList();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+window.approveRequest = approveRequest;
+
+async function rejectRequest(id) {
+  const note = prompt('เหตุผลที่ปฏิเสธ (ไม่บังคับ):') || '';
+  try {
+    await api(`/api/admin/self-service-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) });
+    await loadRequestsList();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+window.rejectRequest = rejectRequest;
 
 init();

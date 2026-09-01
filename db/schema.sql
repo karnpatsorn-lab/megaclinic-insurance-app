@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS employees (
   bank_name           TEXT,
   bank_account        TEXT,
 
+  -- fields an employee can propose changes to via self-service (applied only
+  -- after HR approves — see self_service_requests below)
+  current_address     TEXT,
+  personal_email      TEXT,
+
   -- insurance sheet fields
   insurance_member_id TEXT,
   f_code              TEXT,
@@ -55,14 +60,23 @@ CREATE TABLE IF NOT EXISTS employees (
 CREATE INDEX IF NOT EXISTS idx_employees_status ON employees(status);
 CREATE INDEX IF NOT EXISTS idx_employees_start_date ON employees(start_date);
 
--- One relative per employee (policy allows 1). Table still modeled as
--- one-to-many in case that rule changes later.
+-- employees/relatives already existed before these columns were added, so
+-- CREATE TABLE IF NOT EXISTS above is a no-op on a live database — these
+-- ALTERs are what actually bring an existing table up to date.
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS current_address TEXT;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS personal_email TEXT;
+
+-- The one relative registered for group insurance once an employee reaches
+-- 6 months' tenure (policy allows 1). Kept separate from family_members
+-- below, which is a simple contact roster for HR leave purposes and has no
+-- insurance-specific fields.
 CREATE TABLE IF NOT EXISTS relatives (
   id              SERIAL PRIMARY KEY,
   emp_id          TEXT NOT NULL REFERENCES employees(emp_id) ON DELETE CASCADE,
   title           TEXT,
   first_name      TEXT NOT NULL,
   last_name       TEXT NOT NULL,
+  nickname        TEXT,
   id_card         TEXT,
   nationality     TEXT DEFAULT 'ไทย',
   relation        TEXT,             -- บิดา/มารดา/คู่สมรส/บุตร
@@ -77,7 +91,48 @@ CREATE TABLE IF NOT EXISTS relatives (
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE relatives ADD COLUMN IF NOT EXISTS nickname TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_relatives_emp_id ON relatives(emp_id);
+
+-- General family/emergency-contact roster for HR leave purposes (ลากิจ) —
+-- up to 6 per employee, lighter-weight than the insurance relative above
+-- (no bank/insurance fields). An employee's whole list is replaced as a set
+-- each time they resubmit via self-service.
+CREATE TABLE IF NOT EXISTS family_members (
+  id              SERIAL PRIMARY KEY,
+  emp_id          TEXT NOT NULL REFERENCES employees(emp_id) ON DELETE CASCADE,
+  slot            INTEGER NOT NULL,        -- 1-6, display/order only
+  title           TEXT,
+  first_name      TEXT NOT NULL,
+  last_name       TEXT NOT NULL,
+  nickname        TEXT,
+  relation        TEXT,             -- บิดา/มารดา/คู่สมรส/บุตร/พี่น้อง/อื่นๆ
+  phone           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (emp_id, slot)
+);
+
+CREATE INDEX IF NOT EXISTS idx_family_members_emp_id ON family_members(emp_id);
+
+-- Self-submitted changes an employee makes to their own core profile data
+-- (address, personal email, phone, nickname) sit here as pending until HR
+-- reviews and approves them — never applied straight to employees.
+CREATE TABLE IF NOT EXISTS self_service_requests (
+  id            SERIAL PRIMARY KEY,
+  emp_id        TEXT NOT NULL REFERENCES employees(emp_id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL,        -- 'profile' | 'family_members'
+  payload       JSONB NOT NULL,       -- proposed new values
+  status        TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'approved' | 'rejected'
+  reviewed_by   TEXT,
+  reviewed_at   TIMESTAMPTZ,
+  review_note   TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ssr_status ON self_service_requests(status);
+CREATE INDEX IF NOT EXISTS idx_ssr_emp_id ON self_service_requests(emp_id);
 
 -- Notification batches: draft -> confirmed(sent). Nothing is considered
 -- "sent to insurer" until HR explicitly confirms, so a generated export

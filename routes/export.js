@@ -55,33 +55,43 @@ function writeHeaderBlock(ws, dateLabel) {
   ws.columns = COL_WIDTHS.map((w) => ({ width: w }));
 }
 
+// Column order verified against Mega Clinic's actual submitted forms
+// (แจ้งเข้า/แจ้งออก batch sheets HR has been sending the insurer all year):
+// the "Change Plan" column (not "tierName") is where the plan/tier code
+// goes, and — despite what the English header text says — the column
+// labeled "bankAccountName" actually holds the account NUMBER while
+// "bankAccountNumber" holds the account holder's NAME. Both quirks are
+// copied here deliberately to match what the insurer already receives.
 function addEnrollRow(ws, rowIdx, no, emp, remark) {
   const row = ws.getRow(rowIdx);
+  const holderName = `${emp.first_th || ''} ${emp.last_th || ''}`.trim() || null;
   row.values = [
-    no, 'x', null, null, fmtDateTH(new Date()),
+    no, 'x', planCode(resolvePlan(emp)), null, fmtDateTH(new Date()),
     emp.first_th, emp.last_th, sexOf(emp.title_th), 'ไทย', null,
     fmtDateTH(emp.birthdate), emp.id_card, emp.email, emp.position, emp.phone,
-    emp.emp_id, planCode(resolvePlan(emp)), emp.bank_name || null, null, emp.bank_account || null, remark,
+    emp.emp_id, null, emp.bank_name || null, emp.bank_account || null, holderName, remark,
   ];
 }
 
 function addExitRow(ws, rowIdx, no, emp, remark) {
   const row = ws.getRow(rowIdx);
+  const holderName = `${emp.first_th || ''} ${emp.last_th || ''}`.trim() || null;
   row.values = [
     no, null, null, 'x', fmtDateTH(emp.resign_eff || emp.resign_last_working),
     emp.first_th, emp.last_th, sexOf(emp.title_th), 'ไทย', null,
     fmtDateTH(emp.birthdate), emp.id_card, emp.email, emp.position, emp.phone,
-    emp.emp_id, planCode(resolvePlan(emp)), emp.bank_name || null, null, emp.bank_account || null, remark,
+    null, null, emp.bank_name || null, emp.bank_account || null, holderName, remark,
   ];
 }
 
 function addRelativeRow(ws, rowIdx, no, emp, rel, remark) {
   const row = ws.getRow(rowIdx);
+  const holderName = `${rel.first_name || ''} ${rel.last_name || ''}`.trim() || null;
   row.values = [
-    no, 'x', null, null, fmtDateTH(new Date()),
+    no, 'x', '001', null, fmtDateTH(new Date()),
     rel.first_name, rel.last_name, rel.title === 'นาย' ? 'ช' : 'ญ', rel.nationality || 'ไทย', null,
     fmtDateTH(rel.birthdate), rel.id_card, null, `ญาติ - ${emp.first_th} ${emp.last_th}`, rel.phone,
-    emp.emp_id, '001', rel.bank_name || null, null, rel.bank_account || null, remark,
+    emp.emp_id, null, rel.bank_name || null, rel.bank_account || null, holderName, remark,
   ];
 }
 

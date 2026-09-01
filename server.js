@@ -11,6 +11,8 @@ const rosterRoutes = require('./routes/roster');
 const selfServiceRoutes = require('./routes/selfservice');
 const exportRoutes = require('./routes/export');
 const importRoutes = require('./routes/import');
+const adminCorrectionsRoutes = require('./routes/admin-corrections');
+const selfServiceRequestsRoutes = require('./routes/self-service-requests');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,6 +36,8 @@ app.use(
 
 app.use('/api/admin', authRoutes);
 app.use('/api/admin', importRoutes);
+app.use('/api/admin', adminCorrectionsRoutes);
+app.use('/api/admin', selfServiceRequestsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/roster', rosterRoutes);
 app.use('/api/self-service', selfServiceRoutes);
