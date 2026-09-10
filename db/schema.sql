@@ -65,6 +65,7 @@ CREATE INDEX IF NOT EXISTS idx_employees_start_date ON employees(start_date);
 -- ALTERs are what actually bring an existing table up to date.
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS current_address TEXT;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS personal_email TEXT;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS line_id TEXT;
 
 -- The one relative registered for group insurance once an employee reaches
 -- 6 months' tenure (policy allows 1). Kept separate from family_members

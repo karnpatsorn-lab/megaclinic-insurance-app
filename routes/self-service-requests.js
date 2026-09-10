@@ -45,7 +45,7 @@ router.post('/self-service-requests/:id/approve', requireAdmin, async (req, res)
       const p = request.payload;
       const sets = [];
       const params = [request.emp_id];
-      const map = { nickname: 'nickname', phone: 'phone', currentAddress: 'current_address', personalEmail: 'personal_email' };
+      const map = { nickname: 'nickname', phone: 'phone', currentAddress: 'current_address', personalEmail: 'personal_email', lineId: 'line_id' };
       for (const [key, col] of Object.entries(map)) {
         if (Object.prototype.hasOwnProperty.call(p, key)) {
           params.push(p[key]);

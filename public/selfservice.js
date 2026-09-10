@@ -78,7 +78,10 @@ function renderStep2() {
           <div class="field"><label>เบอร์โทรติดต่อ</label><input type="text" id="p-phone" value="${employee.phone || ''}"></div>
         </div>
         <div class="field"><label>ที่อยู่ปัจจุบัน</label><input type="text" id="p-address" value="${employee.currentAddress || ''}"></div>
-        <div class="field"><label>อีเมลส่วนตัว (ที่ติดต่อได้)</label><input type="email" id="p-email" value="${employee.personalEmail || ''}"></div>
+        <div class="field-row">
+          <div class="field"><label>อีเมลส่วนตัว (ที่ติดต่อได้)</label><input type="email" id="p-email" value="${employee.personalEmail || ''}"></div>
+          <div class="field"><label>LINE ID</label><input type="text" id="p-lineid" value="${employee.lineId || ''}"></div>
+        </div>
         <button class="btn btn-brand" type="submit" style="width:100%;">บันทึกข้อมูลส่วนตัว</button>
         <div class="error-text" id="profile-error"></div>
       </form>
@@ -111,6 +114,7 @@ function wireProfileForm() {
       phone: document.getElementById('p-phone').value.trim(),
       currentAddress: document.getElementById('p-address').value.trim(),
       personalEmail: document.getElementById('p-email').value.trim(),
+      lineId: document.getElementById('p-lineid').value.trim(),
     };
     try {
       const res = await fetch('/api/self-service/profile', {

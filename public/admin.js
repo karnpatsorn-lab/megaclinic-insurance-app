@@ -32,8 +32,9 @@ async function init() {
     const { user } = await api('/api/admin/me');
     if (user) {
       showApp(user);
-      navigate('dashboard');
+      navigate('tasks');
       refreshRequestsBadge();
+      refreshTasksBadge();
     } else {
       showLogin();
     }
@@ -52,6 +53,16 @@ async function refreshRequestsBadge() {
   }
 }
 
+async function refreshTasksBadge() {
+  try {
+    const { totalPeople } = await api('/api/action-queue');
+    const badge = $('#tasks-count-badge');
+    badge.innerHTML = totalPeople ? `<span class="badge badge-warn">${totalPeople}</span>` : '';
+  } catch {
+    // silent — badge is a nice-to-have, not critical
+  }
+}
+
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('#login-error').textContent = '';
@@ -64,7 +75,7 @@ $('#login-form').addEventListener('submit', async (e) => {
       }),
     });
     showApp(user);
-    navigate('dashboard');
+    navigate('tasks');
   } catch (err) {
     $('#login-error').textContent = err.message;
   }
@@ -88,7 +99,8 @@ async function navigate(view) {
   const root = $('#view-root');
   root.innerHTML = '<p class="muted">กำลังโหลด...</p>';
   try {
-    if (view === 'dashboard') await renderDashboard(root);
+    if (view === 'tasks') await renderActionQueue(root);
+    else if (view === 'dashboard') await renderDashboard(root);
     else if (view === 'roster') await renderRoster(root);
     else if (view === 'export') await renderExport(root);
     else if (view === 'requests') await renderRequests(root);
@@ -106,6 +118,119 @@ function fmtDate(d) {
 function personLine(p) {
   return `<div><strong>${p.name || ''}</strong> <span class="muted">${p.nickname ? '(' + p.nickname + ')' : ''}</span><br><span class="muted">${p.department || ''} · ${p.position || ''}</span></div>`;
 }
+
+// ---------- Action Queue (งานที่ต้องทำ) — default landing page ----------
+// One "box" per person listing exactly what's outstanding for them, per
+// Nan's request for something easier to scan than a big scattered table.
+function taskDetailLine(t) {
+  if (t.kind === 'profile' && t.payload) {
+    const labels = { nickname: 'ชื่อเล่น', phone: 'เบอร์โทร', currentAddress: 'ที่อยู่', personalEmail: 'อีเมลส่วนตัว', lineId: 'LINE ID' };
+    return Object.entries(t.payload).map(([k, v]) => `<div class="muted">${labels[k] || k}: ${v || '—'}</div>`).join('');
+  }
+  if (t.kind === 'family_members' && t.payload) {
+    return (t.payload.members || []).map((m) => `<div class="muted">${m.title || ''}${m.firstName} ${m.lastName} (${m.relation || '-'})</div>`).join('');
+  }
+  return '';
+}
+
+function taskRow(t) {
+  const badgeTone = { exit: 'badge-crit', enroll: 'badge-warn', relative: 'badge-warn', request_profile: 'badge-info', request_family: 'badge-info' }[t.type] || 'badge-info';
+  let actionHtml = '<span class="muted">รอพนักงานดำเนินการ</span>';
+  if (t.action && t.action.kind === 'acknowledge') {
+    actionHtml = `<button class="btn btn-brand" style="padding:4px 12px;font-size:12px;" onclick="taskAcknowledge('${t.action.empId}','${t.action.field}')">ทำเครื่องหมายว่าแจ้งแล้ว</button>`;
+  } else if (t.action && t.action.kind === 'review_request') {
+    actionHtml = `
+      <button class="btn btn-brand" style="padding:4px 12px;font-size:12px;" onclick="taskApproveRequest(${t.requestId})">อนุมัติ</button>
+      <button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick="taskRejectRequest(${t.requestId})">ปฏิเสธ</button>
+    `;
+  }
+  return `<div style="padding:8px 0;border-top:1px solid var(--hairline);">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div><span class="badge ${badgeTone}">${t.label}</span> <span class="muted">${t.detail || ''}</span></div>
+      <div style="display:flex;gap:8px;">${actionHtml}</div>
+    </div>
+    ${taskDetailLine(t) ? `<div style="margin-top:6px;padding-left:2px;">${taskDetailLine(t)}</div>` : ''}
+  </div>`;
+}
+
+function taskCard(p) {
+  return `<div class="card" style="border:1px solid var(--hairline);margin-bottom:12px;">
+    <div>
+      <strong>${p.name}</strong> ${p.nickname ? '<span class="muted">(' + p.nickname + ')</span>' : ''}
+      <span class="muted"> · ${p.empId} · ${p.department || ''}</span>
+    </div>
+    <div style="margin-top:4px;">
+      ${p.tasks.map(taskRow).join('')}
+    </div>
+  </div>`;
+}
+
+async function renderActionQueue(root) {
+  root.innerHTML = `
+    <div class="topbar"><h1>งานที่ต้องทำ</h1><span class="muted" id="tasks-asof"></span></div>
+    <div id="tasks-summary"></div>
+    <div id="tasks-list"><p class="muted">กำลังโหลด...</p></div>
+  `;
+  await loadActionQueue();
+}
+
+async function loadActionQueue() {
+  const data = await api('/api/action-queue');
+  $('#tasks-asof').textContent = `ข้อมูล ณ ${fmtDate(data.asOf)}`;
+  const c = data.counts;
+  $('#tasks-summary').innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card crit"><div class="num">${c.exit}</div><div class="label">รอแจ้งออกประกัน</div></div>
+      <div class="kpi-card warn"><div class="num">${c.enroll}</div><div class="label">รอแจ้งเข้าประกัน</div></div>
+      <div class="kpi-card info"><div class="num">${c.request_profile + c.request_family}</div><div class="label">คำขอแก้ไขข้อมูลรอตรวจสอบ</div></div>
+      <div class="kpi-card teal"><div class="num">${c.relative}</div><div class="label">ครบ 6 เดือน ยังไม่แจ้งญาติ</div></div>
+    </div>
+  `;
+  const listEl = $('#tasks-list');
+  if (!data.people.length) {
+    listEl.innerHTML = '<div class="card"><p class="muted" style="margin:0;">ไม่มีงานค้าง ทุกอย่างเรียบร้อย 🎉</p></div>';
+    return;
+  }
+  listEl.innerHTML = data.people.map(taskCard).join('');
+}
+
+async function taskAcknowledge(empId, field) {
+  if (!confirm('ยืนยันว่ารายการนี้ดำเนินการ (แจ้งบริษัทประกัน) เรียบร้อยแล้วจริง?')) return;
+  try {
+    await api(`/api/roster/${empId}/acknowledge`, { method: 'POST', body: JSON.stringify({ field }) });
+    await loadActionQueue();
+    refreshTasksBadge();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+window.taskAcknowledge = taskAcknowledge;
+
+async function taskApproveRequest(id) {
+  if (!confirm('ยืนยันอนุมัติคำขอนี้? ข้อมูลจะถูกบันทึกเข้าระบบทันที')) return;
+  try {
+    await api(`/api/admin/self-service-requests/${id}/approve`, { method: 'POST' });
+    await loadActionQueue();
+    refreshTasksBadge();
+    refreshRequestsBadge();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+window.taskApproveRequest = taskApproveRequest;
+
+async function taskRejectRequest(id) {
+  const note = prompt('เหตุผลที่ปฏิเสธ (ไม่บังคับ):') || '';
+  try {
+    await api(`/api/admin/self-service-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) });
+    await loadActionQueue();
+    refreshTasksBadge();
+    refreshRequestsBadge();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+window.taskRejectRequest = taskRejectRequest;
 
 // ---------- Dashboard ----------
 async function renderDashboard(root) {
@@ -187,6 +312,7 @@ async function acknowledgeField(empId, field) {
   try {
     await api(`/api/roster/${empId}/acknowledge`, { method: 'POST', body: JSON.stringify({ field }) });
     await loadRosterTable($('#roster-search').value);
+    refreshTasksBadge();
   } catch (err) {
     alert(err.message);
   }
@@ -227,10 +353,22 @@ function rosterRow(p) {
 
 // ---------- Export ----------
 let exportPreviewCache = null;
+// Names HR adds directly (not limited to what the eligibility rules
+// auto-detected), keyed by category then empId — per Nan's request to be
+// able to insert whoever she needs into the export and have the system
+// fill in whatever data it already has.
+let exportManualAdded = { enroll: new Map(), exit: new Map(), relative: new Map() };
+let exportSearchResults = new Map();
 
 async function renderExport(root) {
   root.innerHTML = `
     <div class="topbar"><h1>ส่งออกไฟล์ประกัน</h1></div>
+    <div class="card">
+      <h3>เพิ่มรายชื่อเอง</h3>
+      <p class="muted" style="margin-top:0;">ค้นหาและเพิ่มพนักงานคนไหนก็ได้เข้ารายการด้านล่าง ไม่จำกัดเฉพาะที่ระบบตรวจพบอัตโนมัติ — ข้อมูลส่วนไหนขาดระบบจะบอกให้ทราบ</p>
+      <div class="field"><input type="text" id="export-search" placeholder="ค้นหาชื่อ, ชื่อเล่น, หรือรหัสพนักงาน..."></div>
+      <div id="export-search-results"></div>
+    </div>
     <div class="card">
       <h3>เลือกรายการที่จะสร้างไฟล์ส่งบริษัทประกัน</h3>
       <div id="export-lists"><p class="muted">กำลังโหลด...</p></div>
@@ -242,36 +380,114 @@ async function renderExport(root) {
       <div id="batch-history"><p class="muted">กำลังโหลด...</p></div>
     </div>
   `;
+  exportManualAdded = { enroll: new Map(), exit: new Map(), relative: new Map() };
   exportPreviewCache = await api('/api/export/preview');
   renderExportLists();
   $('#generate-btn').addEventListener('click', doGenerate);
+
+  const searchInput = $('#export-search');
+  let searchTimer;
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = searchInput.value.trim();
+    if (!q) {
+      $('#export-search-results').innerHTML = '';
+      return;
+    }
+    searchTimer = setTimeout(async () => {
+      try {
+        const { results } = await api(`/api/export/search?q=${encodeURIComponent(q)}`);
+        renderExportSearchResults(results);
+      } catch (err) {
+        $('#export-search-results').innerHTML = `<p class="error-text">${err.message}</p>`;
+      }
+    }, 300);
+  });
+
   await renderBatchHistory();
 }
 
+function missingChipsHtml(missing) {
+  if (!missing || !missing.length) return '';
+  return missing.map((f) => `<span class="badge badge-warn" style="margin-left:4px;">ขาด: ${f}</span>`).join('');
+}
+
+function renderExportSearchResults(results) {
+  exportSearchResults = new Map(results.map((p) => [p.empId, p]));
+  const el = $('#export-search-results');
+  if (!results.length) {
+    el.innerHTML = '<p class="muted">ไม่พบข้อมูล</p>';
+    return;
+  }
+  el.innerHTML = results.map((p) => {
+    const relBtn = p.hasRelative
+      ? `<button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="addManualExport('relative','${p.empId}')">+ แจ้งเพิ่มญาติ</button>`
+      : `<button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" disabled title="ยังไม่มีข้อมูลญาติของคนนี้ในระบบ">+ แจ้งเพิ่มญาติ</button>`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--hairline);flex-wrap:wrap;">
+      <div style="flex:1;min-width:220px;">
+        <strong>${p.name}</strong> ${p.nickname ? '<span class="muted">(' + p.nickname + ')</span>' : ''}
+        <span class="muted"> ${p.empId} · ${p.department || ''}</span>
+        ${missingChipsHtml(p.missingFields)}
+        ${p.hasRelative ? `<div class="muted" style="margin-top:2px;">ญาติในระบบ: ${p.relativeName}${missingChipsHtml(p.relativeMissingFields)}</div>` : ''}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="addManualExport('enroll','${p.empId}')">+ แจ้งเข้า</button>
+        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="addManualExport('exit','${p.empId}')">+ แจ้งออก</button>
+        ${relBtn}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function addManualExport(category, empId) {
+  const p = exportSearchResults.get(empId);
+  if (!p) return;
+  if (category === 'relative' && !p.hasRelative) {
+    alert('ยังไม่มีข้อมูลญาติของคนนี้ในระบบ');
+    return;
+  }
+  exportManualAdded[category].set(empId, p);
+  renderExportLists();
+}
+window.addManualExport = addManualExport;
+
+function removeManualExport(category, empId) {
+  exportManualAdded[category].delete(empId);
+  renderExportLists();
+}
+window.removeManualExport = removeManualExport;
+
 function renderExportLists() {
   const { enroll, exit, relatives } = exportPreviewCache;
-  const section = (title, items, prefix) => {
-    if (!items.length) return `<p class="muted">${title}: ไม่มีรายการ</p>`;
-    return `<div style="margin-bottom:16px;">
-      <strong>${title} (${items.length})</strong>
-      ${items.map((p) => `
+  const section = (title, autoItems, manualMap, prefix, nameOf) => {
+    const manualItems = Array.from(manualMap.values());
+    const total = autoItems.length + manualItems.length;
+    if (!total) return `<p class="muted">${title}: ไม่มีรายการ</p>`;
+    const rowHtml = (p, isManual) => {
+      const missing = missingChipsHtml(prefix === 'relative' ? p.relativeMissingFields : p.missingFields);
+      return `
         <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--hairline);">
           <input type="checkbox" class="${prefix}-check" value="${p.empId}" checked>
-          <div style="flex:1;">${p.name || p.relativeName} <span class="muted">${p.empId}</span>${p.missingBank || p.relativeMissingBank ? ' <span class="badge badge-warn">ไม่มีข้อมูลธนาคาร</span>' : ''}</div>
-        </div>
-      `).join('')}
+          <div style="flex:1;">${nameOf(p)} <span class="muted">${p.empId}</span>${isManual ? ' <span class="badge badge-info">เพิ่มเอง</span>' : ''}${missing}</div>
+          ${isManual ? `<button type="button" class="btn btn-ghost" style="padding:2px 8px;" onclick="removeManualExport('${prefix}','${p.empId}')">✕</button>` : ''}
+        </div>`;
+    };
+    return `<div style="margin-bottom:16px;">
+      <strong>${title} (${total})</strong>
+      ${autoItems.map((p) => rowHtml(p, false)).join('')}
+      ${manualItems.map((p) => rowHtml(p, true)).join('')}
     </div>`;
   };
   $('#export-lists').innerHTML =
-    section('แจ้งเข้าประกัน', enroll, 'enroll') +
-    section('แจ้งออกประกัน', exit, 'exit') +
-    section('แจ้งเพิ่มญาติ', relatives, 'relative');
+    section('แจ้งเข้าประกัน', enroll, exportManualAdded.enroll, 'enroll', (p) => p.name) +
+    section('แจ้งออกประกัน', exit, exportManualAdded.exit, 'exit', (p) => p.name) +
+    section('แจ้งเพิ่มญาติ', relatives, exportManualAdded.relative, 'relative', (p) => (p.relativeName ? `${p.relativeName} <span class="muted">(ญาติของ ${p.name})</span>` : p.name));
 }
 
 async function doGenerate() {
-  const enrollEmpIds = $$('.enroll-check:checked').map((c) => c.value);
-  const exitEmpIds = $$('.exit-check:checked').map((c) => c.value);
-  const relativeEmpIds = $$('.relative-check:checked').map((c) => c.value);
+  const enrollEmpIds = [...new Set($$('.enroll-check:checked').map((c) => c.value))];
+  const exitEmpIds = [...new Set($$('.exit-check:checked').map((c) => c.value))];
+  const relativeEmpIds = [...new Set($$('.relative-check:checked').map((c) => c.value))];
   const resultEl = $('#generate-result');
   resultEl.innerHTML = '<p class="muted">กำลังสร้างไฟล์...</p>';
   try {
@@ -315,6 +531,7 @@ async function confirmBatch(batchId) {
     exportPreviewCache = await api('/api/export/preview');
     renderExportLists();
     await renderBatchHistory();
+    refreshTasksBadge();
   } catch (err) {
     alert(err.message);
   }
@@ -347,7 +564,7 @@ async function renderBatchHistory() {
 // ---------- Self-service requests (HR review queue) ----------
 function requestPayloadLine(r) {
   if (r.kind === 'profile') {
-    const labels = { nickname: 'ชื่อเล่น', phone: 'เบอร์โทร', currentAddress: 'ที่อยู่', personalEmail: 'อีเมลส่วนตัว' };
+    const labels = { nickname: 'ชื่อเล่น', phone: 'เบอร์โทร', currentAddress: 'ที่อยู่', personalEmail: 'อีเมลส่วนตัว', lineId: 'LINE ID' };
     return Object.entries(r.payload).map(([k, v]) => `<div><span class="muted">${labels[k] || k}:</span> ${v || '—'}</div>`).join('');
   }
   if (r.kind === 'family_members') {
@@ -400,6 +617,7 @@ async function approveRequest(id) {
   try {
     await api(`/api/admin/self-service-requests/${id}/approve`, { method: 'POST' });
     await loadRequestsList();
+    refreshTasksBadge();
   } catch (err) {
     alert(err.message);
   }
@@ -411,6 +629,7 @@ async function rejectRequest(id) {
   try {
     await api(`/api/admin/self-service-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ note }) });
     await loadRequestsList();
+    refreshTasksBadge();
   } catch (err) {
     alert(err.message);
   }

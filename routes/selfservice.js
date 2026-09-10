@@ -73,6 +73,7 @@ router.post('/verify', async (req, res) => {
         phone: emp.phone,
         currentAddress: emp.current_address,
         personalEmail: emp.personal_email,
+        lineId: emp.line_id,
       },
       eligibility: elig,
       existingRelative: relRes.rows[0] || null,
@@ -158,12 +159,13 @@ router.post('/profile', async (req, res) => {
   if (!verifyToken.verify(token, String(empId).trim())) {
     return res.status(401).json({ error: 'เซสชันหมดอายุ กรุณายืนยันตัวตนใหม่อีกครั้ง' });
   }
-  const { nickname, phone, currentAddress, personalEmail } = profile;
+  const { nickname, phone, currentAddress, personalEmail, lineId } = profile;
   const payload = {};
   if (nickname !== undefined) payload.nickname = String(nickname).trim() || null;
   if (phone !== undefined) payload.phone = String(phone).trim() || null;
   if (currentAddress !== undefined) payload.currentAddress = String(currentAddress).trim() || null;
   if (personalEmail !== undefined) payload.personalEmail = String(personalEmail).trim() || null;
+  if (lineId !== undefined) payload.lineId = String(lineId).trim() || null;
   if (Object.keys(payload).length === 0) {
     return res.status(400).json({ error: 'ไม่มีข้อมูลที่จะแก้ไข' });
   }

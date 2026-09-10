@@ -21,6 +21,27 @@ function sexOf(titleTh) {
   return titleTh === 'นาย' ? 'ช' : 'ญ';
 }
 
+// Which fields are missing on an employee/relative record, in Thai, for
+// display as flags in the UI — lets HR see exactly what needs filling in
+// rather than just a single generic "missing bank info" flag.
+function missingFieldsOf(emp) {
+  const missing = [];
+  if (!emp.id_card) missing.push('เลขบัตรประชาชน');
+  if (!emp.phone) missing.push('เบอร์โทร');
+  if (!emp.email) missing.push('อีเมล');
+  if (!emp.birthdate) missing.push('วันเกิด');
+  if (!emp.bank_name || !emp.bank_account) missing.push('ข้อมูลธนาคาร');
+  return missing;
+}
+
+function missingRelativeFieldsOf(rel) {
+  const missing = [];
+  if (!rel.id_card) missing.push('เลขบัตรประชาชน');
+  if (!rel.birthdate) missing.push('วันเกิด');
+  if (!rel.bank_name || !rel.bank_account) missing.push('ข้อมูลธนาคาร');
+  return missing;
+}
+
 function planCode(plan) {
   const n = parseInt(plan, 10);
   if (!n || isNaN(n)) return null;
@@ -118,6 +139,35 @@ async function loadCandidates() {
   return { enroll, exit, relatives };
 }
 
+// Any employee, regardless of whether they'd be auto-detected as eligible —
+// used so HR can insert a name into the export directly instead of being
+// limited to what the eligibility rules flagged automatically.
+async function loadEmployeesByIds(empIds) {
+  const ids = [...new Set(empIds)].filter(Boolean);
+  if (!ids.length) return [];
+  const res = await pool.query('SELECT * FROM employees WHERE emp_id = ANY($1)', [ids]);
+  const byId = new Map(res.rows.map((e) => [e.emp_id, e]));
+  return ids.filter((id) => byId.has(id)).map((id) => {
+    const emp = byId.get(id);
+    return { emp, elig: computeEligibility(emp) };
+  });
+}
+
+// Same idea for the relative-enrollment rows, which additionally need the
+// employee's filed relative record — an employee with no relative on file
+// simply can't produce a relative row, so those ids are silently skipped.
+async function loadRelativesByEmpIds(empIds) {
+  const ids = [...new Set(empIds)].filter(Boolean);
+  if (!ids.length) return [];
+  const empRes = await pool.query('SELECT * FROM employees WHERE emp_id = ANY($1)', [ids]);
+  const relRes = await pool.query('SELECT * FROM relatives WHERE emp_id = ANY($1)', [ids]);
+  const empById = new Map(empRes.rows.map((e) => [e.emp_id, e]));
+  const relByEmp = new Map(relRes.rows.map((r) => [r.emp_id, r]));
+  return ids
+    .filter((id) => empById.has(id) && relByEmp.has(id))
+    .map((id) => ({ emp: empById.get(id), elig: computeEligibility(empById.get(id)), rel: relByEmp.get(id) }));
+}
+
 router.get('/preview', requireAdmin, async (req, res) => {
   try {
     const { enroll, exit, relatives } = await loadCandidates();
@@ -126,6 +176,7 @@ router.get('/preview', requireAdmin, async (req, res) => {
       name: `${emp.title_th || ''}${emp.first_th || ''} ${emp.last_th || ''}`.trim(),
       department: emp.department,
       missingBank: !emp.bank_account || !emp.bank_name,
+      missingFields: missingFieldsOf(emp),
       ...elig,
     });
     res.json({
@@ -135,11 +186,54 @@ router.get('/preview', requireAdmin, async (req, res) => {
         ...fmt({ emp, elig }),
         relativeName: `${rel.first_name} ${rel.last_name}`,
         relativeMissingBank: !rel.bank_account || !rel.bank_name,
+        relativeMissingFields: missingRelativeFieldsOf(rel),
       })),
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'โหลดรายการไม่สำเร็จ' });
+  }
+});
+
+// Free-text search across ALL employees (not just auto-detected candidates)
+// so HR can insert any name into the export directly, per Nan's request —
+// each result carries missing-field flags so gaps are obvious before adding.
+router.get('/search', requireAdmin, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (!q) return res.json({ results: [] });
+    const empRes = await pool.query(
+      `SELECT * FROM employees
+       WHERE first_th ILIKE $1 OR last_th ILIKE $1 OR nickname ILIKE $1 OR emp_id ILIKE $1
+       ORDER BY first_th NULLS LAST LIMIT 20`,
+      [`%${q}%`]
+    );
+    const empIds = empRes.rows.map((e) => e.emp_id);
+    const relRes = empIds.length
+      ? await pool.query('SELECT * FROM relatives WHERE emp_id = ANY($1)', [empIds])
+      : { rows: [] };
+    const relByEmp = new Map(relRes.rows.map((r) => [r.emp_id, r]));
+
+    const results = empRes.rows.map((emp) => {
+      const elig = computeEligibility(emp);
+      const rel = relByEmp.get(emp.emp_id);
+      return {
+        empId: emp.emp_id,
+        name: `${emp.title_th || ''}${emp.first_th || ''} ${emp.last_th || ''}`.trim(),
+        nickname: emp.nickname,
+        department: emp.department,
+        status: emp.status,
+        missingFields: missingFieldsOf(emp),
+        hasRelative: !!rel,
+        relativeName: rel ? `${rel.first_name} ${rel.last_name}` : null,
+        relativeMissingFields: rel ? missingRelativeFieldsOf(rel) : [],
+        ...elig,
+      };
+    });
+    res.json({ results });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'ค้นหาไม่สำเร็จ' });
   }
 });
 
@@ -149,13 +243,23 @@ router.post('/generate', requireAdmin, async (req, res) => {
   const { enrollEmpIds = [], exitEmpIds = [], relativeEmpIds = [] } = req.body || {};
   const client = await pool.connect();
   try {
-    const { enroll, exit, relatives } = await loadCandidates();
-    const enrollSelected = enroll.filter((r) => enrollEmpIds.includes(r.emp.emp_id));
-    const exitSelected = exit.filter((r) => exitEmpIds.includes(r.emp.emp_id));
-    const relativeSelected = relatives.filter((r) => relativeEmpIds.includes(r.emp.emp_id));
+    // Looked up directly by id rather than filtered against the
+    // auto-detected candidate lists, so a name HR added manually (not
+    // flagged eligible by the automatic rules) is still included instead of
+    // being silently dropped.
+    const enrollSelected = await loadEmployeesByIds(enrollEmpIds);
+    const exitSelected = await loadEmployeesByIds(exitEmpIds);
+    const relativeSelected = await loadRelativesByEmpIds(relativeEmpIds);
+    const relativeSkipped = [...new Set(relativeEmpIds)].filter(
+      (id) => id && !relativeSelected.some((r) => r.emp.emp_id === id)
+    );
 
     if (!enrollSelected.length && !exitSelected.length && !relativeSelected.length) {
-      return res.status(400).json({ error: 'ไม่มีรายการที่เลือกไว้สำหรับสร้างไฟล์' });
+      return res.status(400).json({
+        error: relativeSkipped.length
+          ? 'ไม่มีรายการที่เลือกไว้สำหรับสร้างไฟล์ (รายชื่อที่เลือกไว้สำหรับแจ้งเพิ่มญาติยังไม่มีข้อมูลญาติในระบบ)'
+          : 'ไม่มีรายการที่เลือกไว้สำหรับสร้างไฟล์',
+      });
     }
 
     await client.query('BEGIN');
