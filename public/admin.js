@@ -143,6 +143,8 @@ function taskRow(t) {
       <button class="btn btn-brand" style="padding:4px 12px;font-size:12px;" onclick="taskApproveRequest(${t.requestId})">อนุมัติ</button>
       <button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick="taskRejectRequest(${t.requestId})">ปฏิเสธ</button>
     `;
+  } else if (t.action && t.action.kind === 'add_relative') {
+    actionHtml = `<button class="btn btn-ghost" style="padding:4px 12px;font-size:12px;" onclick="openAddRelativeModal('${t.action.empId}','${(t.action.name || '').replace(/'/g, "\\'")}')">+ กรอกข้อมูลญาติให้</button>`;
   }
   return `<div style="padding:8px 0;border-top:1px solid var(--hairline);">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
@@ -231,6 +233,82 @@ async function taskRejectRequest(id) {
   }
 }
 window.taskRejectRequest = taskRejectRequest;
+
+// ---------- Generic modal ----------
+function showModal(html) {
+  closeModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `<div class="modal-box">${html}</div>`;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+  document.body.appendChild(overlay);
+}
+function closeModal() {
+  const el = $('#modal-overlay');
+  if (el) el.remove();
+}
+window.closeModal = closeModal;
+
+// ---------- Add relative (HR filling it in on the employee's behalf) ----------
+function openAddRelativeModal(empId, name) {
+  showModal(`
+    <h3>กรอกข้อมูลญาติให้ ${name || empId}</h3>
+    <p class="muted" style="margin-top:0;">ใช้ตอนพนักงานครบ 6 เดือนแล้วแต่ยังไม่ได้แจ้งข้อมูลญาติเองผ่านลิงก์ self-service</p>
+    <div class="field-row">
+      <div class="field"><label>คำนำหน้า</label><input type="text" id="rel-title" placeholder="นาย/นาง/นางสาว"></div>
+      <div class="field"><label>ความสัมพันธ์</label><input type="text" id="rel-relation" placeholder="บิดา/มารดา/คู่สมรส/บุตร"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>ชื่อ *</label><input type="text" id="rel-first"></div>
+      <div class="field"><label>นามสกุล *</label><input type="text" id="rel-last"></div>
+    </div>
+    <div class="field"><label>ชื่อเล่น</label><input type="text" id="rel-nickname"></div>
+    <div class="field-row">
+      <div class="field"><label>เลขบัตรประชาชน</label><input type="text" id="rel-idcard"></div>
+      <div class="field"><label>วันเกิด</label><input type="date" id="rel-birthdate"></div>
+    </div>
+    <div class="field"><label>เบอร์โทร</label><input type="text" id="rel-phone"></div>
+    <div class="field-row">
+      <div class="field"><label>ธนาคาร</label><input type="text" id="rel-bankname"></div>
+      <div class="field"><label>เลขบัญชี</label><input type="text" id="rel-bankaccount"></div>
+    </div>
+    <div class="error-text" id="rel-modal-error"></div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn btn-brand" onclick="submitAddRelative('${empId}')">บันทึก</button>
+      <button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>
+    </div>
+  `);
+}
+window.openAddRelativeModal = openAddRelativeModal;
+
+async function submitAddRelative(empId) {
+  const relative = {
+    title: $('#rel-title').value.trim(),
+    firstName: $('#rel-first').value.trim(),
+    lastName: $('#rel-last').value.trim(),
+    nickname: $('#rel-nickname').value.trim(),
+    relation: $('#rel-relation').value.trim(),
+    idCard: $('#rel-idcard').value.trim(),
+    birthdate: $('#rel-birthdate').value || null,
+    phone: $('#rel-phone').value.trim(),
+    bankName: $('#rel-bankname').value.trim(),
+    bankAccount: $('#rel-bankaccount').value.trim(),
+  };
+  if (!relative.firstName || !relative.lastName) {
+    $('#rel-modal-error').textContent = 'กรุณากรอกชื่อและนามสกุล';
+    return;
+  }
+  try {
+    await api(`/api/roster/${empId}/relative`, { method: 'POST', body: JSON.stringify({ relative }) });
+    closeModal();
+    await loadActionQueue();
+    refreshTasksBadge();
+  } catch (err) {
+    $('#rel-modal-error').textContent = err.message;
+  }
+}
+window.submitAddRelative = submitAddRelative;
 
 // ---------- Dashboard ----------
 async function renderDashboard(root) {

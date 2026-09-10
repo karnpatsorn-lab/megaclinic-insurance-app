@@ -105,3 +105,7 @@ label{font-size:13px;font-weight:600;color:var(--ink-dim);display:block;margin-b
 .step-indicator{display:flex;gap:8px;margin-bottom:20px;}
 .step-dot{width:10px;height:10px;border-radius:50%;background:var(--hairline);}
 .step-dot.active{background:var(--brand);}
+
+.modal-overlay{position:fixed;inset:0;background:rgba(20,14,10,0.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:1000;}
+.modal-box{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:24px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;}
+.modal-box h3{margin-top:0;}

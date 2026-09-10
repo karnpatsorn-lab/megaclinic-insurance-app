@@ -100,4 +100,53 @@ router.post('/:empId/acknowledge', requireAdmin, async (req, res) => {
   }
 });
 
+// HR adds/updates the one insurance relative directly on an employee's
+// behalf — for cases where the employee reached 6 months but never used the
+// self-service link themselves. Mirrors the self-service /relative logic,
+// but as an admin action (no employee-side token, no 6-month gate — HR has
+// full authority here) and logged with the admin's own username as actor.
+router.post('/:empId/relative', requireAdmin, async (req, res) => {
+  const { relative } = req.body || {};
+  if (!relative || typeof relative !== 'object') {
+    return res.status(400).json({ error: 'ข้อมูลไม่ครบถ้วน' });
+  }
+  const { firstName, lastName, nickname, idCard, nationality, relation, bankName, bankAccount, birthdate, phone } = relative;
+  if (!firstName || !lastName) {
+    return res.status(400).json({ error: 'กรุณากรอกชื่อและนามสกุลญาติ' });
+  }
+  try {
+    const empRes = await pool.query('SELECT emp_id FROM employees WHERE emp_id = $1', [req.params.empId]);
+    if (empRes.rowCount === 0) return res.status(404).json({ error: 'ไม่พบข้อมูลพนักงาน' });
+
+    const existing = await pool.query('SELECT id FROM relatives WHERE emp_id = $1', [req.params.empId]);
+    let relRow;
+    if (existing.rowCount > 0) {
+      const upd = await pool.query(
+        `UPDATE relatives SET title=$1, first_name=$2, last_name=$3, nickname=$4, id_card=$5, nationality=$6, relation=$7,
+           bank_name=$8, bank_account=$9, birthdate=$10, phone=$11, date_filed=CURRENT_DATE, updated_at=now()
+         WHERE emp_id = $12 RETURNING *`,
+        [relative.title || null, firstName, lastName, nickname || null, idCard || null, nationality || 'ไทย', relation || null,
+         bankName || null, bankAccount || null, birthdate || null, phone || null, req.params.empId]
+      );
+      relRow = upd.rows[0];
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO relatives (emp_id, title, first_name, last_name, nickname, id_card, nationality, relation, bank_name, bank_account, birthdate, phone, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'admin') RETURNING *`,
+        [req.params.empId, relative.title || null, firstName, lastName, nickname || null, idCard || null, nationality || 'ไทย', relation || null,
+         bankName || null, bankAccount || null, birthdate || null, phone || null]
+      );
+      relRow = ins.rows[0];
+    }
+    await pool.query(
+      `INSERT INTO activity_log (emp_id, actor, action, detail) VALUES ($1, $2, 'relative_added_by_admin', $3)`,
+      [req.params.empId, req.session.adminUser.username, JSON.stringify(relative)]
+    );
+    res.json({ ok: true, relative: relRow });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'บันทึกข้อมูลไม่สำเร็จ' });
+  }
+});
+
 module.exports = router;

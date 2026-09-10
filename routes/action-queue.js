@@ -73,8 +73,8 @@ router.get('/', requireAdmin, async (req, res) => {
         ensurePerson(emp.emp_id, seed).tasks.push({
           type: 'relative',
           label: TASK_LABELS.relative,
-          detail: `ครบ 6 เดือนเมื่อ ${elig.eligible6mDate || '-'} — รอพนักงานแจ้งข้อมูลญาติเอง`,
-          action: null,
+          detail: `ครบ 6 เดือนเมื่อ ${elig.eligible6mDate || '-'} — รอพนักงานแจ้งข้อมูลญาติเอง หรือ HR กรอกให้เองได้`,
+          action: { kind: 'add_relative', empId: emp.emp_id, name: seed.name },
         });
       }
     }
