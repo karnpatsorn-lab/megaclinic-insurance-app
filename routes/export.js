@@ -45,7 +45,10 @@ function missingRelativeFieldsOf(rel) {
 function planCode(plan) {
   const n = parseInt(plan, 10);
   if (!n || isNaN(n)) return null;
-  return String(n).padStart(3, '0');
+  // Plain digit, no zero-padding — matches HR's real submitted forms
+  // (e.g. "4", not "004"), confirmed against Nan's actual dated
+  // แจ้งเข้า/แจ้งออก sheets sent to the insurer.
+  return String(n);
 }
 
 function fmtDateTH(d) {
